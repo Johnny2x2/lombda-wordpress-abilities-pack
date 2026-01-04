@@ -1,6 +1,6 @@
 # WordPress MCP Abilities Pack
 
-> A collection of WordPress abilities plugins that extend the [MCP Adapter](https://github.com/WordPress/mcp-adapter) with **63 powerful abilities** for database access, Elementor page building, and SEO management.
+> A collection of WordPress abilities plugins that extend the [MCP Adapter](https://github.com/WordPress/mcp-adapter) with **90+ powerful abilities** for database access, content management, Elementor page building, FacetWP filtering, and SEO management.
 
 Part of the [**AI Building Blocks for WordPress**](https://make.wordpress.org/ai/2025/07/17/ai-building-blocks) ecosystem.
 
@@ -12,7 +12,9 @@ The [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) is an open 
 
 **This abilities pack** extends that functionality with specialized abilities for:
 - 🗄️ **Database** - Direct database queries, meta management, options
+- 📝 **Content** - Posts, pages, categories, tags, and media management
 - 🎨 **Elementor** - Page builder integration, widget management, templates
+- 🔎 **FacetWP** - Faceted search and filtering management
 - 🔍 **SEO** - Yoast SEO and RankMath metadata management
 
 ---
@@ -48,6 +50,7 @@ Then install the abilities pack plugins by downloading and placing them in your 
    - Download or clone this repository
    - Copy the desired plugin folders to `/wp-content/plugins/`:
      - `wordpress-database-mcp-abilities/`
+     - `wordpress-content-mcp-abilities/`
      - `wordpress-elementor-mcp-abilities/`
      - `wordpress-yoast-mcp-abilities/`
 
@@ -58,7 +61,9 @@ wp-content/plugins/
 ├── abilities-api/                      # Required: Core API
 ├── mcp-adapter/                        # Required: MCP Protocol Bridge
 ├── wordpress-database-mcp-abilities/   # Database abilities
+├── wordpress-content-mcp-abilities/    # Content abilities (posts, media, taxonomies)
 ├── wordpress-elementor-mcp-abilities/  # Elementor abilities
+├── wordpress-facetwp-mcp-abilities/    # FacetWP abilities
 └── wordpress-yoast-mcp-abilities/      # SEO abilities
 ```
 
@@ -204,7 +209,9 @@ Each abilities plugin is **automatically enabled** when activated in WordPress. 
 | Plugin | Activate If You Need... |
 |--------|------------------------|
 | `wordpress-database-mcp-abilities` | Direct database access, meta management, options |
+| `wordpress-content-mcp-abilities` | Posts, pages, categories, tags, media management |
 | `wordpress-elementor-mcp-abilities` | Elementor page builder integration (requires Elementor) |
+| `wordpress-facetwp-mcp-abilities` | Faceted search/filtering management (requires FacetWP) |
 | `wordpress-yoast-mcp-abilities` | SEO management (requires Yoast SEO or RankMath) |
 
 ---
@@ -238,7 +245,50 @@ Direct database access for querying, searching, and managing WordPress data.
 
 ---
 
-### 🎨 Elementor Abilities (36 abilities)
+### 📝 WordPress Content Abilities (20+ abilities)
+
+Native WordPress content management for posts, pages, categories, tags, and media.
+
+#### Taxonomy Management
+
+| Ability | Description |
+|---------|-------------|
+| `wordpress/get-categories` | Get WordPress categories |
+| `wordpress/create-category` | Create a new category |
+| `wordpress/update-category` | Update an existing category |
+| `wordpress/delete-category` | Delete a category |
+| `wordpress/get-tags` | Get WordPress tags |
+| `wordpress/create-tag` | Create a new tag |
+| `wordpress/update-tag` | Update an existing tag |
+| `wordpress/delete-tag` | Delete a tag |
+
+#### Media Management
+
+| Ability | Description |
+|---------|-------------|
+| `wordpress/get-media` | Get media library items |
+| `wordpress/get-media-item` | Get single media item details |
+| `wordpress/upload-media-url` | Upload media from URL |
+| `wordpress/update-media` | Update media metadata |
+| `wordpress/delete-media` | Delete a media item |
+| `wordpress/set-featured-image` | Set post featured image |
+| `wordpress/remove-featured-image` | Remove post featured image |
+
+#### Post & Page Management
+
+| Ability | Description |
+|---------|-------------|
+| `wordpress/create-post` | Create a WordPress post |
+| `wordpress/get-post` | Get a post by ID |
+| `wordpress/list-posts` | List posts with filtering |
+| `wordpress/update-post` | Update an existing post |
+| `wordpress/delete-post` | Delete a post |
+| `wordpress/create-page` | Create a WordPress page |
+| `wordpress/convert-markdown` | Convert Markdown to HTML |
+
+---
+
+### 🎨 Elementor Abilities (27 abilities)
 
 Complete Elementor page builder integration for creating and managing pages, widgets, and templates.
 
@@ -290,26 +340,66 @@ Complete Elementor page builder integration for creating and managing pages, wid
 | Ability | Description |
 |---------|-------------|
 | `elementor/list-templates` | List saved templates |
+| `elementor/upload-template` | Upload/import a template |
+| `elementor/get-template` | Get template data |
+| `elementor/delete-template` | Delete a template |
+| `elementor/update-template` | Update a template |
+| `elementor/duplicate-template` | Duplicate a template |
+| `elementor/export-template` | Export template as JSON |
 | `elementor/clear-cache` | Clear Elementor cache |
 | `elementor/get-info` | Get Elementor system info |
 
-#### WordPress Integration
+---
+
+### � FacetWP Abilities (17 abilities)
+
+Complete FacetWP integration for managing faceted search, filtering, and indexing.
+
+#### Facet Management
 
 | Ability | Description |
 |---------|-------------|
-| `elementor/get-categories` | Get WordPress categories |
-| `elementor/create-category` | Create a new category |
-| `elementor/get-tags` | Get WordPress tags |
-| `elementor/create-tag` | Create a new tag |
-| `elementor/get-media` | Get media library items |
-| `elementor/upload-media-url` | Upload media from URL |
-| `elementor/set-featured-image` | Set post featured image |
-| `elementor/convert-markdown` | Convert Markdown to HTML |
-| `elementor/create-post` | Create a WordPress post |
+| `facetwp/list-facets` | List all configured facets with settings |
+| `facetwp/get-facet` | Get detailed info about a specific facet |
+| `facetwp/create-facet` | Create a new facet (checkboxes, dropdown, slider, etc.) |
+| `facetwp/update-facet` | Update an existing facet configuration |
+| `facetwp/delete-facet` | Delete a facet by name |
+| `facetwp/list-facet-types` | List all 18 available facet types |
+
+#### Template Management
+
+| Ability | Description |
+|---------|-------------|
+| `facetwp/list-templates` | List all FacetWP listing templates |
+| `facetwp/get-template` | Get template details and layout |
+| `facetwp/create-template` | Create a new listing template |
+| `facetwp/update-template` | Update an existing template |
+| `facetwp/delete-template` | Delete a template |
+
+#### Index Management
+
+| Ability | Description |
+|---------|-------------|
+| `facetwp/get-index-status` | Get index stats, row counts, last indexed time |
+| `facetwp/rebuild-index` | Trigger full or single-post reindex |
+| `facetwp/get-index-progress` | Get current indexing progress percentage |
+| `facetwp/purge-index` | Purge the entire index table (use with caution) |
+
+#### Settings & Configuration
+
+| Ability | Description |
+|---------|-------------|
+| `facetwp/get-settings` | Get current FacetWP settings |
+| `facetwp/update-settings` | Update general settings |
+| `facetwp/get-info` | Get version, license status, facet/template counts |
+| `facetwp/export-settings` | Export all settings as JSON |
+| `facetwp/import-settings` | Import settings (merge or overwrite) |
+| `facetwp/list-data-sources` | List available data sources (taxonomies, ACF, custom fields) |
+| `facetwp/list-indexable-types` | List post types that can be indexed |
 
 ---
 
-### 🔍 SEO Abilities (9 abilities)
+### �🔍 SEO Abilities (9 abilities)
 
 Manage SEO metadata for both **Yoast SEO** and **RankMath** plugins.
 
@@ -355,6 +445,20 @@ AI Agent: "Create a new landing page called 'Summer Sale' with Elementor"
 ```
 AI Agent: "Set SEO titles for all posts that are missing them"
 → Uses: seo/get-posts-missing-seo, seo/bulk-set-yoast-seo
+```
+
+### Create a FacetWP Facet
+
+```
+AI Agent: "Create a category filter facet for my products"
+→ Uses: facetwp/create-facet with type=checkboxes, source=tax/category
+```
+
+### Check FacetWP Index Status
+
+```
+AI Agent: "What's the status of my FacetWP index?"
+→ Uses: facetwp/get-index-status, facetwp/get-info
 ```
 
 ---
