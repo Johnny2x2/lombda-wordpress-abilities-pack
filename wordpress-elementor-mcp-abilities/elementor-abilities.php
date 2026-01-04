@@ -1718,6 +1718,433 @@ class Elementor_Abilities_Plugin {
             'permission_callback' => function() { return current_user_can( 'edit_posts' ); },
             'meta' => self::$mcp_meta,
         ) );
+
+        // Upload/Import Template
+        wp_register_ability( 'elementor/upload-template', array(
+            'label' => 'Upload Elementor Template',
+            'description' => 'Uploads/imports a new Elementor template from JSON data. Creates a new template in the Elementor library.',
+            'category' => self::$category,
+            'input_schema' => array(
+                'type' => 'object',
+                'properties' => array(
+                    'title' => array( 'type' => 'string', 'description' => 'Template title/name.' ),
+                    'template_type' => array( 'type' => 'string', 'description' => 'Template type: page, section, container, header, footer, single, archive, loop-item, popup. Default: section.', 'default' => 'section' ),
+                    'elements' => array( 'type' => 'array', 'description' => 'Array of Elementor elements (sections/containers, columns, widgets) that make up the template.' ),
+                    'elementor_data' => array( 'type' => 'string', 'description' => 'Alternative: Raw Elementor JSON data string. Use either elements (array) or elementor_data (string), not both.' ),
+                    'page_settings' => array( 'type' => 'object', 'description' => 'Optional page/template settings.' ),
+                    'status' => array( 'type' => 'string', 'description' => 'Post status: publish, draft. Default: publish.', 'default' => 'publish' ),
+                ),
+                'required' => array( 'title' ),
+            ),
+            'output_schema' => array(
+                'type' => 'object',
+                'properties' => array(
+                    'success' => array( 'type' => 'boolean' ),
+                    'template_id' => array( 'type' => 'integer' ),
+                    'title' => array( 'type' => 'string' ),
+                    'template_type' => array( 'type' => 'string' ),
+                    'edit_url' => array( 'type' => 'string' ),
+                    'preview_url' => array( 'type' => 'string' ),
+                ),
+            ),
+            'execute_callback' => array( $this, 'execute_upload_template' ),
+            'permission_callback' => function() { return current_user_can( 'edit_posts' ); },
+            'meta' => self::$mcp_meta,
+        ) );
+
+        // Get Template
+        wp_register_ability( 'elementor/get-template', array(
+            'label' => 'Get Elementor Template',
+            'description' => 'Retrieves a specific Elementor template with its complete data, elements, and settings.',
+            'category' => self::$category,
+            'input_schema' => array(
+                'type' => 'object',
+                'properties' => array(
+                    'template_id' => array( 'type' => 'integer', 'description' => 'The ID of the template to retrieve.' ),
+                ),
+                'required' => array( 'template_id' ),
+            ),
+            'output_schema' => array(
+                'type' => 'object',
+                'properties' => array(
+                    'id' => array( 'type' => 'integer' ),
+                    'title' => array( 'type' => 'string' ),
+                    'template_type' => array( 'type' => 'string' ),
+                    'elements' => array( 'type' => 'array' ),
+                    'page_settings' => array( 'type' => 'object' ),
+                    'status' => array( 'type' => 'string' ),
+                    'edit_url' => array( 'type' => 'string' ),
+                    'preview_url' => array( 'type' => 'string' ),
+                ),
+            ),
+            'execute_callback' => function( $input ) {
+                $template_id = absint( $input['template_id'] );
+                $post = get_post( $template_id );
+                
+                if ( ! $post || $post->post_type !== 'elementor_library' ) {
+                    return new WP_Error( 'not_found', 'Template not found.', array( 'status' => 404 ) );
+                }
+                
+                $elementor_data = get_post_meta( $template_id, '_elementor_data', true );
+                $elements = $elementor_data ? json_decode( $elementor_data, true ) : array();
+                $page_settings = get_post_meta( $template_id, '_elementor_page_settings', true );
+                
+                return array(
+                    'id' => $template_id,
+                    'title' => $post->post_title,
+                    'template_type' => get_post_meta( $template_id, '_elementor_template_type', true ),
+                    'elements' => $elements,
+                    'page_settings' => $page_settings ? $page_settings : array(),
+                    'status' => $post->post_status,
+                    'edit_url' => admin_url( 'post.php?post=' . $template_id . '&action=elementor' ),
+                    'preview_url' => get_preview_post_link( $template_id ),
+                );
+            },
+            'permission_callback' => function() { return current_user_can( 'edit_posts' ); },
+            'meta' => self::$mcp_meta,
+        ) );
+
+        // Delete Template
+        wp_register_ability( 'elementor/delete-template', array(
+            'label' => 'Delete Elementor Template',
+            'description' => 'Deletes an Elementor template from the library.',
+            'category' => self::$category,
+            'input_schema' => array(
+                'type' => 'object',
+                'properties' => array(
+                    'template_id' => array( 'type' => 'integer', 'description' => 'The ID of the template to delete.' ),
+                    'force' => array( 'type' => 'boolean', 'description' => 'Force delete (bypass trash). Default: false.', 'default' => false ),
+                ),
+                'required' => array( 'template_id' ),
+            ),
+            'output_schema' => array(
+                'type' => 'object',
+                'properties' => array(
+                    'success' => array( 'type' => 'boolean' ),
+                    'deleted_id' => array( 'type' => 'integer' ),
+                ),
+            ),
+            'execute_callback' => function( $input ) {
+                $template_id = absint( $input['template_id'] );
+                $post = get_post( $template_id );
+                
+                if ( ! $post || $post->post_type !== 'elementor_library' ) {
+                    return new WP_Error( 'not_found', 'Template not found.', array( 'status' => 404 ) );
+                }
+                
+                $force = isset( $input['force'] ) && $input['force'];
+                $result = wp_delete_post( $template_id, $force );
+                
+                if ( ! $result ) {
+                    return new WP_Error( 'delete_failed', 'Failed to delete template.', array( 'status' => 500 ) );
+                }
+                
+                return array(
+                    'success' => true,
+                    'deleted_id' => $template_id,
+                );
+            },
+            'permission_callback' => function() { return current_user_can( 'delete_posts' ); },
+            'meta' => self::$mcp_meta,
+        ) );
+
+        // Update Template
+        wp_register_ability( 'elementor/update-template', array(
+            'label' => 'Update Elementor Template',
+            'description' => 'Updates an existing Elementor template with new elements, settings, or metadata.',
+            'category' => self::$category,
+            'input_schema' => array(
+                'type' => 'object',
+                'properties' => array(
+                    'template_id' => array( 'type' => 'integer', 'description' => 'The ID of the template to update.' ),
+                    'title' => array( 'type' => 'string', 'description' => 'New template title (optional).' ),
+                    'elements' => array( 'type' => 'array', 'description' => 'New Elementor elements array (optional).' ),
+                    'elementor_data' => array( 'type' => 'string', 'description' => 'Alternative: Raw Elementor JSON data string.' ),
+                    'page_settings' => array( 'type' => 'object', 'description' => 'Updated page/template settings (optional).' ),
+                    'status' => array( 'type' => 'string', 'description' => 'New post status (optional).' ),
+                ),
+                'required' => array( 'template_id' ),
+            ),
+            'output_schema' => array(
+                'type' => 'object',
+                'properties' => array(
+                    'success' => array( 'type' => 'boolean' ),
+                    'template_id' => array( 'type' => 'integer' ),
+                    'edit_url' => array( 'type' => 'string' ),
+                ),
+            ),
+            'execute_callback' => array( $this, 'execute_update_template' ),
+            'permission_callback' => function() { return current_user_can( 'edit_posts' ); },
+            'meta' => self::$mcp_meta,
+        ) );
+
+        // Duplicate Template
+        wp_register_ability( 'elementor/duplicate-template', array(
+            'label' => 'Duplicate Elementor Template',
+            'description' => 'Creates a copy of an existing Elementor template with a new title.',
+            'category' => self::$category,
+            'input_schema' => array(
+                'type' => 'object',
+                'properties' => array(
+                    'template_id' => array( 'type' => 'integer', 'description' => 'The ID of the template to duplicate.' ),
+                    'new_title' => array( 'type' => 'string', 'description' => 'Title for the duplicated template. Default: "[Original Title] (Copy)".' ),
+                ),
+                'required' => array( 'template_id' ),
+            ),
+            'output_schema' => array(
+                'type' => 'object',
+                'properties' => array(
+                    'success' => array( 'type' => 'boolean' ),
+                    'original_id' => array( 'type' => 'integer' ),
+                    'new_template_id' => array( 'type' => 'integer' ),
+                    'title' => array( 'type' => 'string' ),
+                    'edit_url' => array( 'type' => 'string' ),
+                ),
+            ),
+            'execute_callback' => function( $input ) {
+                $template_id = absint( $input['template_id'] );
+                $post = get_post( $template_id );
+                
+                if ( ! $post || $post->post_type !== 'elementor_library' ) {
+                    return new WP_Error( 'not_found', 'Template not found.', array( 'status' => 404 ) );
+                }
+                
+                $new_title = isset( $input['new_title'] ) 
+                    ? sanitize_text_field( $input['new_title'] ) 
+                    : $post->post_title . ' (Copy)';
+                
+                // Create the duplicate post
+                $new_post_id = wp_insert_post( array(
+                    'post_title' => $new_title,
+                    'post_type' => 'elementor_library',
+                    'post_status' => 'publish',
+                ), true );
+                
+                if ( is_wp_error( $new_post_id ) ) {
+                    return $new_post_id;
+                }
+                
+                // Copy all post meta
+                $meta_keys = array(
+                    '_elementor_data',
+                    '_elementor_template_type',
+                    '_elementor_edit_mode',
+                    '_elementor_page_settings',
+                    '_elementor_version',
+                );
+                
+                foreach ( $meta_keys as $key ) {
+                    $value = get_post_meta( $template_id, $key, true );
+                    if ( $value ) {
+                        update_post_meta( $new_post_id, $key, $value );
+                    }
+                }
+                
+                // Clear cache
+                if ( class_exists( 'Elementor\Plugin' ) ) {
+                    Elementor\Plugin::$instance->files_manager->clear_cache();
+                }
+                
+                return array(
+                    'success' => true,
+                    'original_id' => $template_id,
+                    'new_template_id' => $new_post_id,
+                    'title' => $new_title,
+                    'edit_url' => admin_url( 'post.php?post=' . $new_post_id . '&action=elementor' ),
+                );
+            },
+            'permission_callback' => function() { return current_user_can( 'edit_posts' ); },
+            'meta' => self::$mcp_meta,
+        ) );
+
+        // Export Template (as JSON)
+        wp_register_ability( 'elementor/export-template', array(
+            'label' => 'Export Elementor Template',
+            'description' => 'Exports an Elementor template as JSON data that can be imported later or shared.',
+            'category' => self::$category,
+            'input_schema' => array(
+                'type' => 'object',
+                'properties' => array(
+                    'template_id' => array( 'type' => 'integer', 'description' => 'The ID of the template to export.' ),
+                ),
+                'required' => array( 'template_id' ),
+            ),
+            'output_schema' => array(
+                'type' => 'object',
+                'properties' => array(
+                    'success' => array( 'type' => 'boolean' ),
+                    'template_id' => array( 'type' => 'integer' ),
+                    'title' => array( 'type' => 'string' ),
+                    'export_data' => array( 'type' => 'object', 'description' => 'Complete template export data including elements and metadata.' ),
+                ),
+            ),
+            'execute_callback' => function( $input ) {
+                $template_id = absint( $input['template_id'] );
+                $post = get_post( $template_id );
+                
+                if ( ! $post || $post->post_type !== 'elementor_library' ) {
+                    return new WP_Error( 'not_found', 'Template not found.', array( 'status' => 404 ) );
+                }
+                
+                $elementor_data = get_post_meta( $template_id, '_elementor_data', true );
+                $elements = $elementor_data ? json_decode( $elementor_data, true ) : array();
+                $page_settings = get_post_meta( $template_id, '_elementor_page_settings', true );
+                $template_type = get_post_meta( $template_id, '_elementor_template_type', true );
+                
+                $export_data = array(
+                    'title' => $post->post_title,
+                    'template_type' => $template_type ? $template_type : 'section',
+                    'content' => $elements,
+                    'page_settings' => $page_settings ? $page_settings : array(),
+                    'version' => defined( 'ELEMENTOR_VERSION' ) ? ELEMENTOR_VERSION : '3.0.0',
+                    'type' => 'elementor',
+                );
+                
+                return array(
+                    'success' => true,
+                    'template_id' => $template_id,
+                    'title' => $post->post_title,
+                    'export_data' => $export_data,
+                );
+            },
+            'permission_callback' => function() { return current_user_can( 'edit_posts' ); },
+            'meta' => self::$mcp_meta,
+        ) );
+    }
+
+    /**
+     * Execute upload/import template
+     */
+    public function execute_upload_template( $input ) {
+        $title = sanitize_text_field( $input['title'] );
+        $template_type = isset( $input['template_type'] ) ? sanitize_key( $input['template_type'] ) : 'section';
+        $status = isset( $input['status'] ) ? sanitize_key( $input['status'] ) : 'publish';
+        
+        // Validate template type
+        $valid_types = array( 'page', 'section', 'container', 'header', 'footer', 'single', 'archive', 'loop-item', 'popup', 'widget' );
+        if ( ! in_array( $template_type, $valid_types ) ) {
+            $template_type = 'section';
+        }
+        
+        // Determine elements data - either from elements array or raw elementor_data string
+        $elements = array();
+        if ( isset( $input['elements'] ) && is_array( $input['elements'] ) ) {
+            $elements = $input['elements'];
+            $elementor_data = wp_json_encode( $elements );
+        } elseif ( isset( $input['elementor_data'] ) && is_string( $input['elementor_data'] ) ) {
+            $elementor_data = $input['elementor_data'];
+            $elements = json_decode( $elementor_data, true );
+            if ( json_last_error() !== JSON_ERROR_NONE ) {
+                return new WP_Error( 'invalid_json', 'Invalid JSON in elementor_data.', array( 'status' => 400 ) );
+            }
+        } else {
+            $elementor_data = '[]';
+        }
+        
+        // Create the template post
+        $post_id = wp_insert_post( array(
+            'post_title' => $title,
+            'post_type' => 'elementor_library',
+            'post_status' => $status,
+        ), true );
+        
+        if ( is_wp_error( $post_id ) ) {
+            return $post_id;
+        }
+        
+        // Set Elementor metadata
+        update_post_meta( $post_id, '_elementor_data', wp_slash( $elementor_data ) );
+        update_post_meta( $post_id, '_elementor_template_type', $template_type );
+        update_post_meta( $post_id, '_elementor_edit_mode', 'builder' );
+        update_post_meta( $post_id, '_elementor_version', defined( 'ELEMENTOR_VERSION' ) ? ELEMENTOR_VERSION : '3.0.0' );
+        
+        // Set page settings if provided
+        if ( isset( $input['page_settings'] ) && is_array( $input['page_settings'] ) ) {
+            update_post_meta( $post_id, '_elementor_page_settings', $input['page_settings'] );
+        }
+        
+        // Set the template type taxonomy term (used by Elementor for categorization)
+        wp_set_object_terms( $post_id, $template_type, 'elementor_library_type' );
+        
+        // Clear Elementor cache
+        if ( class_exists( 'Elementor\Plugin' ) ) {
+            Elementor\Plugin::$instance->files_manager->clear_cache();
+        }
+        
+        return array(
+            'success' => true,
+            'template_id' => $post_id,
+            'title' => $title,
+            'template_type' => $template_type,
+            'edit_url' => admin_url( 'post.php?post=' . $post_id . '&action=elementor' ),
+            'preview_url' => get_preview_post_link( $post_id ),
+        );
+    }
+
+    /**
+     * Execute update template
+     */
+    public function execute_update_template( $input ) {
+        $template_id = absint( $input['template_id'] );
+        $post = get_post( $template_id );
+        
+        if ( ! $post || $post->post_type !== 'elementor_library' ) {
+            return new WP_Error( 'not_found', 'Template not found.', array( 'status' => 404 ) );
+        }
+        
+        // Update post data if title or status provided
+        $update_post = array( 'ID' => $template_id );
+        $needs_update = false;
+        
+        if ( isset( $input['title'] ) ) {
+            $update_post['post_title'] = sanitize_text_field( $input['title'] );
+            $needs_update = true;
+        }
+        
+        if ( isset( $input['status'] ) ) {
+            $update_post['post_status'] = sanitize_key( $input['status'] );
+            $needs_update = true;
+        }
+        
+        if ( $needs_update ) {
+            $result = wp_update_post( $update_post, true );
+            if ( is_wp_error( $result ) ) {
+                return $result;
+            }
+        }
+        
+        // Update elements data
+        if ( isset( $input['elements'] ) && is_array( $input['elements'] ) ) {
+            $elementor_data = wp_json_encode( $input['elements'] );
+            update_post_meta( $template_id, '_elementor_data', wp_slash( $elementor_data ) );
+        } elseif ( isset( $input['elementor_data'] ) && is_string( $input['elementor_data'] ) ) {
+            $decoded = json_decode( $input['elementor_data'], true );
+            if ( json_last_error() !== JSON_ERROR_NONE ) {
+                return new WP_Error( 'invalid_json', 'Invalid JSON in elementor_data.', array( 'status' => 400 ) );
+            }
+            update_post_meta( $template_id, '_elementor_data', wp_slash( $input['elementor_data'] ) );
+        }
+        
+        // Update page settings if provided
+        if ( isset( $input['page_settings'] ) && is_array( $input['page_settings'] ) ) {
+            $existing_settings = get_post_meta( $template_id, '_elementor_page_settings', true );
+            if ( ! is_array( $existing_settings ) ) {
+                $existing_settings = array();
+            }
+            $merged_settings = array_merge( $existing_settings, $input['page_settings'] );
+            update_post_meta( $template_id, '_elementor_page_settings', $merged_settings );
+        }
+        
+        // Clear Elementor cache
+        if ( class_exists( 'Elementor\Plugin' ) ) {
+            Elementor\Plugin::$instance->files_manager->clear_cache();
+        }
+        
+        return array(
+            'success' => true,
+            'template_id' => $template_id,
+            'edit_url' => admin_url( 'post.php?post=' . $template_id . '&action=elementor' ),
+        );
     }
 
     // =========================================================================
