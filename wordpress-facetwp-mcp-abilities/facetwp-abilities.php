@@ -2,7 +2,7 @@
 /**
  * Plugin Name: WordPress FacetWP Abilities
  * Description: Exposes FacetWP filtering and facet management functionality as WordPress Abilities for AI agents via MCP.
- * Version: 1.0.0
+ * Version: 1.1.0
  * Author: Lombda LLC
  * Requires Plugins: facetwp
  */
@@ -47,6 +47,162 @@ class WordPress_FacetWP_Abilities_Plugin {
      */
     private function is_facetwp_active() {
         return function_exists( 'FWP' ) && class_exists( 'FacetWP' );
+    }
+
+    // =========================================================================
+    // TEMPLATE NORMALIZATION HELPERS
+    //
+    // FacetWP's renderer (class-renderer.php) does `eval( "?" . ">" . $query )`
+    // (i.e. prefixes the stored string with a PHP close tag) before eval'ing it.
+    // That means the stored value MUST be a PHP source string that opens with
+    // `<?php` — otherwise the raw source is echoed into the page as HTML.
+    // Similarly, `modes` is read as an associative array with `query` and
+    // `display` keys. Callers (especially AI agents) tend to pass WP_Query
+    // args as a JSON object and `modes` as a list — both of which silently
+    // break the frontend. These helpers normalize either shape into what
+    // FacetWP actually requires on disk.
+    // =========================================================================
+
+    /**
+     * Normalize a template `query` input into FacetWP's stored PHP-string form.
+     *
+     * Accepts:
+     *  - string starting with `<?php` or `<?` → used as-is
+     *  - string without opening tag           → prefixed with `<?php\n`
+     *  - array                                → wrapped as `<?php return [...];`
+     *  - empty / null                         → empty string (FacetWP defaults)
+     *
+     * @param mixed $query Raw input from caller.
+     * @return string Normalized PHP source for FacetWP to eval.
+     */
+    private function normalize_template_query( $query ) {
+        if ( empty( $query ) ) {
+            return '';
+        }
+
+        if ( is_string( $query ) ) {
+            $trim = ltrim( $query );
+            if ( strpos( $trim, '<?php' ) === 0 || strpos( $trim, '<?' ) === 0 ) {
+                return $query;
+            }
+            // Plain string provided — treat it as PHP body and prefix the tag.
+            return "<?php\n" . $query;
+        }
+
+        if ( is_array( $query ) ) {
+            // Export as a WP_Query args array.
+            return "<?php\nreturn " . var_export( $query, true ) . ";\n";
+        }
+
+        return '';
+    }
+
+    /**
+     * Normalize a template `template` (display code) input.
+     *
+     * FacetWP evals the display template the same way — it must be a valid
+     * PHP source string. If the caller provides raw markup without any PHP
+     * tags, leave it alone (mixed HTML is legal). Only touch strings that
+     * contain `<?php` opening tags mid-stream without an initial tag.
+     *
+     * @param mixed $template Raw input.
+     * @return string
+     */
+    private function normalize_template_display( $template ) {
+        if ( ! is_string( $template ) ) {
+            return '';
+        }
+        return $template;
+    }
+
+    /**
+     * Normalize a template `modes` input into the assoc form FacetWP expects.
+     *
+     * Accepts:
+     *  - assoc array with `query`/`display` keys → used as-is (missing keys filled)
+     *  - list array containing 'visual'/'default' tokens → best-effort mapping
+     *  - null / empty → default `['query' => 'default', 'display' => 'default']`
+     *
+     * @param mixed $modes Raw input.
+     * @return array `['query' => 'default'|'visual', 'display' => 'default'|'visual']`
+     */
+    private function normalize_template_modes( $modes ) {
+        $defaults = array( 'query' => 'default', 'display' => 'default' );
+
+        if ( empty( $modes ) ) {
+            return $defaults;
+        }
+
+        if ( is_array( $modes ) ) {
+            // Assoc form (has 'query' or 'display' string keys).
+            if ( isset( $modes['query'] ) || isset( $modes['display'] ) ) {
+                return array(
+                    'query'   => isset( $modes['query'] ) ? (string) $modes['query'] : 'default',
+                    'display' => isset( $modes['display'] ) ? (string) $modes['display'] : 'default',
+                );
+            }
+            // List form — if it contains 'visual' that mode is visual, else default.
+            $list = array_map( 'strval', array_values( $modes ) );
+            return array(
+                'query'   => in_array( 'visual', $list, true ) ? 'visual' : 'default',
+                'display' => in_array( 'visual', $list, true ) ? 'visual' : 'default',
+            );
+        }
+
+        return $defaults;
+    }
+
+    /**
+     * Validate a normalized template definition against what the renderer
+     * actually needs. Returns an array of warning strings (never fatal) so the
+     * caller can see *why* a frontend might look broken even though the save
+     * succeeded.
+     *
+     * @param array $template Normalized template definition.
+     * @return string[] Warnings.
+     */
+    private function collect_template_warnings( $template ) {
+        $warnings = array();
+
+        $modes = isset( $template['modes'] ) ? $template['modes'] : array();
+        $query_mode = isset( $modes['query'] ) ? $modes['query'] : 'default';
+        $display_mode = isset( $modes['display'] ) ? $modes['display'] : 'default';
+
+        // Default query mode evals the stored string — require a PHP opener.
+        if ( 'default' === $query_mode && ! empty( $template['query'] ) ) {
+            $trim = ltrim( (string) $template['query'] );
+            if ( strpos( $trim, '<?php' ) !== 0 && strpos( $trim, '<?' ) !== 0 ) {
+                $warnings[] = 'query is missing a leading `<?php` tag; FacetWP will echo the source as HTML on the frontend.';
+            }
+        }
+
+        // Visual query mode requires a query_obj.
+        if ( 'visual' === $query_mode && empty( $template['query_obj'] ) ) {
+            $warnings[] = 'modes.query is "visual" but no query_obj was provided.';
+        }
+
+        // Visual display mode requires a layout.
+        if ( 'visual' === $display_mode && empty( $template['layout'] ) ) {
+            $warnings[] = 'modes.display is "visual" but no layout was provided.';
+        }
+
+        return $warnings;
+    }
+
+    /**
+     * Trigger a FacetWP re-index without bailing out if it cannot run inline.
+     * Used as a post-write hook on facet / template writes.
+     *
+     * @return bool True if re-index was triggered.
+     */
+    private function trigger_reindex() {
+        if ( ! $this->is_facetwp_active() ) {
+            return false;
+        }
+        // Match the native dashboard behavior: clear any cancel flag, then index.
+        update_option( 'facetwp_indexing_cancelled', 'no', 'no' );
+        FWP()->indexer->index();
+        return true;
     }
 
     public function register_abilities() {
@@ -117,6 +273,7 @@ class WordPress_FacetWP_Abilities_Plugin {
                     'orderby' => array( 'type' => 'string', 'description' => 'Sort order: count, display_value, raw_value, term_order.' ),
                     'count' => array( 'type' => 'integer', 'description' => 'Number of choices to show (-1 for unlimited).' ),
                     'settings' => array( 'type' => 'object', 'description' => 'Additional facet-specific settings as key-value pairs.' ),
+                    'reindex' => array( 'type' => 'boolean', 'description' => 'Trigger FacetWP re-index after save. Default: true.', 'default' => true ),
                 ),
                 'required' => array( 'name', 'label', 'type' ),
             ),
@@ -225,16 +382,17 @@ class WordPress_FacetWP_Abilities_Plugin {
         // Create Template
         wp_register_ability( 'facetwp/create-template', array(
             'label' => 'Create FacetWP Template',
-            'description' => 'Create a new FacetWP listing template.',
+            'description' => 'Create a new FacetWP listing template. `query` accepts either a PHP source string (must start with `<?php`) OR a plain WP_Query args object — the ability will wrap objects into `<?php return [...];` automatically. `modes` accepts the preferred assoc form {query: default|visual, display: default|visual}. Re-index runs automatically unless `reindex: false` is set.',
             'category' => self::$category,
             'input_schema' => array(
                 'type' => 'object',
                 'properties' => array(
                     'name' => array( 'type' => 'string', 'description' => 'Unique name/slug for the template.' ),
                     'label' => array( 'type' => 'string', 'description' => 'Display label for the template.' ),
-                    'query' => array( 'type' => 'object', 'description' => 'WP_Query arguments as an object.' ),
+                    'query' => array( 'description' => 'Either a PHP source string that returns a WP_Query args array (e.g. "<?php return [\'post_type\' => \'page\'];"), or a WP_Query args object that will be wrapped automatically.' ),
                     'template' => array( 'type' => 'string', 'description' => 'PHP/HTML display template code.' ),
-                    'modes' => array( 'type' => 'array', 'description' => 'Display modes: display, visual.' ),
+                    'modes' => array( 'description' => 'Display/query modes. Preferred: {"query": "default", "display": "default"}. A list like ["default"] is also accepted.' ),
+                    'reindex' => array( 'type' => 'boolean', 'description' => 'Trigger FacetWP re-index after save. Default: true.', 'default' => true ),
                 ),
                 'required' => array( 'name', 'label' ),
             ),
@@ -247,15 +405,17 @@ class WordPress_FacetWP_Abilities_Plugin {
         // Update Template
         wp_register_ability( 'facetwp/update-template', array(
             'label' => 'Update FacetWP Template',
-            'description' => 'Update an existing FacetWP template.',
+            'description' => 'Update an existing FacetWP template. Only provided fields are updated (partial merge). Pass a plain WP_Query args object OR a PHP source string for `query` — the ability normalizes it to the on-disk format FacetWP\'s renderer expects. Re-index runs automatically after writes that change the query unless `reindex: false`.',
             'category' => self::$category,
             'input_schema' => array(
                 'type' => 'object',
                 'properties' => array(
                     'name' => array( 'type' => 'string', 'description' => 'The name of the template to update.' ),
                     'label' => array( 'type' => 'string', 'description' => 'New display label.' ),
-                    'query' => array( 'type' => 'object', 'description' => 'New WP_Query arguments.' ),
+                    'query' => array( 'description' => 'New query. Either a PHP source string or a WP_Query args object.' ),
                     'template' => array( 'type' => 'string', 'description' => 'New display template code.' ),
+                    'modes' => array( 'description' => 'New modes: {"query": "default|visual", "display": "default|visual"}.' ),
+                    'reindex' => array( 'type' => 'boolean', 'description' => 'Trigger FacetWP re-index after save. Default: true when query changes, false otherwise.' ),
                 ),
                 'required' => array( 'name' ),
             ),
@@ -589,10 +749,16 @@ class WordPress_FacetWP_Abilities_Plugin {
         // Reload helper settings
         FWP()->helper->settings = FWP()->helper->load_settings();
 
+        // Re-index by default — a newly created facet has no rows until indexed.
+        $reindex = array_key_exists( 'reindex', $input ) ? (bool) $input['reindex'] : true;
+        $reindexed = $reindex ? $this->trigger_reindex() : false;
+
         return array(
-            'success' => true,
-            'facet' => $facet,
-            'message' => "Facet '$name' created successfully. Re-index required for it to work.",
+            'success'   => true,
+            'facet'     => $facet,
+            'reindexed' => $reindexed,
+            'message'   => "Facet '$name' created successfully."
+                . ( $reindexed ? ' FacetWP re-index initiated.' : ' Re-index required for it to work.' ),
         );
     }
 
@@ -763,32 +929,28 @@ class WordPress_FacetWP_Abilities_Plugin {
         }
 
         $name = sanitize_title( $input['name'] );
-        
+
         // Check if template already exists
         if ( FWP()->helper->get_template_by_name( $name ) ) {
             return new WP_Error( 'template_exists', "Template '$name' already exists.", array( 'status' => 400 ) );
         }
 
-        // Build template config
+        // Build template config — always normalize to the on-disk shape FacetWP's
+        // renderer expects, regardless of how the caller passed `query`/`modes`.
         $template = array(
-            'name' => $name,
-            'label' => sanitize_text_field( $input['label'] ),
+            'name'     => $name,
+            'label'    => sanitize_text_field( $input['label'] ),
+            'query'    => $this->normalize_template_query( $input['query'] ?? '' ),
+            'template' => $this->normalize_template_display( $input['template'] ?? '' ),
+            'modes'    => $this->normalize_template_modes( $input['modes'] ?? null ),
         );
 
-        if ( ! empty( $input['query'] ) ) {
-            $template['query'] = $input['query'];
-        }
-        if ( ! empty( $input['template'] ) ) {
-            $template['template'] = $input['template'];
-        }
-        if ( ! empty( $input['modes'] ) ) {
-            $template['modes'] = $input['modes'];
-        }
+        $warnings = $this->collect_template_warnings( $template );
 
         // Get current settings and add template
         $settings_json = get_option( 'facetwp_settings', '{}' );
         $settings = json_decode( $settings_json, true );
-        
+
         if ( ! isset( $settings['templates'] ) ) {
             $settings['templates'] = array();
         }
@@ -801,10 +963,17 @@ class WordPress_FacetWP_Abilities_Plugin {
         // Reload helper settings
         FWP()->helper->settings = FWP()->helper->load_settings();
 
+        // Re-index by default; the new listing won't work without a fresh index.
+        $reindex = array_key_exists( 'reindex', $input ) ? (bool) $input['reindex'] : true;
+        $reindexed = $reindex ? $this->trigger_reindex() : false;
+
         return array(
-            'success' => true,
-            'template' => $template,
-            'message' => "Template '$name' created successfully.",
+            'success'   => true,
+            'template'  => $template,
+            'warnings'  => $warnings,
+            'reindexed' => $reindexed,
+            'message'   => "Template '$name' created successfully."
+                . ( $reindexed ? ' FacetWP re-index initiated.' : '' ),
         );
     }
 
@@ -823,18 +992,24 @@ class WordPress_FacetWP_Abilities_Plugin {
             return new WP_Error( 'template_not_found', "Template '$name' not found.", array( 'status' => 404 ) );
         }
 
-        // Find and update the template
+        // Find and update the template (partial merge on provided fields only).
         $found = false;
+        $query_changed = false;
+        $updated_template = null;
         foreach ( $settings['templates'] as $i => $template ) {
-            if ( $template['name'] === $name ) {
+            if ( isset( $template['name'] ) && $template['name'] === $name ) {
                 if ( ! empty( $input['label'] ) ) {
                     $settings['templates'][ $i ]['label'] = sanitize_text_field( $input['label'] );
                 }
-                if ( ! empty( $input['query'] ) ) {
-                    $settings['templates'][ $i ]['query'] = $input['query'];
+                if ( array_key_exists( 'query', $input ) ) {
+                    $settings['templates'][ $i ]['query'] = $this->normalize_template_query( $input['query'] );
+                    $query_changed = true;
                 }
-                if ( ! empty( $input['template'] ) ) {
-                    $settings['templates'][ $i ]['template'] = $input['template'];
+                if ( array_key_exists( 'template', $input ) ) {
+                    $settings['templates'][ $i ]['template'] = $this->normalize_template_display( $input['template'] );
+                }
+                if ( array_key_exists( 'modes', $input ) ) {
+                    $settings['templates'][ $i ]['modes'] = $this->normalize_template_modes( $input['modes'] );
                 }
 
                 $found = true;
@@ -847,16 +1022,25 @@ class WordPress_FacetWP_Abilities_Plugin {
             return new WP_Error( 'template_not_found', "Template '$name' not found.", array( 'status' => 404 ) );
         }
 
+        $warnings = $this->collect_template_warnings( $updated_template );
+
         // Save settings
         update_option( 'facetwp_settings', json_encode( $settings ), 'no' );
 
         // Reload helper settings
         FWP()->helper->settings = FWP()->helper->load_settings();
 
+        // Re-index when the query changed (or when explicitly requested).
+        $reindex = array_key_exists( 'reindex', $input ) ? (bool) $input['reindex'] : $query_changed;
+        $reindexed = $reindex ? $this->trigger_reindex() : false;
+
         return array(
-            'success' => true,
-            'template' => $updated_template,
-            'message' => "Template '$name' updated successfully.",
+            'success'   => true,
+            'template'  => $updated_template,
+            'warnings'  => $warnings,
+            'reindexed' => $reindexed,
+            'message'   => "Template '$name' updated successfully."
+                . ( $reindexed ? ' FacetWP re-index initiated.' : '' ),
         );
     }
 

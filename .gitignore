@@ -1,2 +1,21 @@
+# Archives / build artifacts
 *.zip
+
+# Secrets / local env
+.env
+*.code-workspace
+
+# Scratch / temp files
+.tmp/
+_tmp_*
+_apply*.json
+out.txt
+run_exec.js
+
+# Screenshots / local captures
+*.png
+
+# Vendor folders
 FacetWP/
+node_modules/
+dist/
